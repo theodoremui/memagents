@@ -16,11 +16,20 @@ from typing import Any, List, Optional
 import tiktoken
 from llama_index.core.llms import ChatMessage, TextBlock
 from llama_index.core.memory import BaseMemoryBlock, Memory
-from pydantic import Field
+from llama_index.llms.openai import OpenAI
+from llama_index.core.llms import CompletionResponse
+from pydantic import Field, PrivateAttr
+from llama_index.core.settings import Settings
 
 # the latest supported encoding model by tiktoken is gpt-4o as of 7/2/2025
 ENCODING_MODEL = "gpt-4o"
 DEFAULT_TOKEN_LIMIT = 50000
+
+MAX_SUMMARY_CHARS = 128
+SUMMARIZE_TEXT_PROMPT = (
+    "Summarize the following text in no more than {max_chars} characters. "
+    "Be concise and preserve key meaning.\n\n{text}"
+)
 
 class CondensedMemoryBlock(BaseMemoryBlock[str]):
     """
@@ -32,9 +41,11 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
 
     It also includes additional kwargs, like tool calls, when needed.
     """
-    current_memory: List[str] = Field(default_factory=list)
+    name: str = Field(...)
     token_limit: int = Field(default=DEFAULT_TOKEN_LIMIT)
-    tokenizer: tiktoken.Encoding = tiktoken.encoding_for_model(ENCODING_MODEL) 
+    current_memory: List[str] = Field(default_factory=list)
+    _tokenizer: tiktoken.Encoding = PrivateAttr(default_factory=lambda: tiktoken.encoding_for_model(ENCODING_MODEL))
+    _llm: OpenAI = PrivateAttr(default_factory=lambda: OpenAI(model="gpt-4.1-mini"))
 
     async def _aget(
         self, messages: Optional[List[ChatMessage]] = None, **block_kwargs: Any
@@ -42,15 +53,28 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
         """Return the current memory block contents."""
         return "\n".join(self.current_memory)
 
+    async def summarize_text_with_llm(self, text: str, max_chars: int) -> str:
+        """Use an LLM to semantically summarize text to a character limit."""
+
+        if len(text.strip()) <= max_chars:
+            return text.strip()
+        else:       
+            prompt = SUMMARIZE_TEXT_PROMPT.format(max_chars=max_chars, text=text)
+            response = await self._llm.acomplete(prompt=prompt)
+            summary = response.text.strip()
+            if len(summary) > max_chars:
+                summary = summary[:max_chars].rstrip() + "..."
+        return summary
+
     async def _aput(self, messages: List[ChatMessage]) -> None:
         """Push messages into the memory block. (Only handles text content)"""
-        # construct a string for each message
         for message in messages:
-            text_contents = "\n".join(
-                block.text
-                for block in message.blocks
-                if isinstance(block, TextBlock)
-            )
+            summaries = []
+            for block in message.blocks:
+                if isinstance(block, TextBlock):
+                    summary = await self.summarize_text_with_llm(block.text, MAX_SUMMARY_CHARS)
+                    summaries.append(summary)
+            text_contents = "\n".join(summaries)
             memory_str = text_contents if text_contents else ""
             kwargs = {}
             for key, val in message.additional_kwargs.items():
@@ -71,13 +95,13 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
 
         # ensure this memory block doesn't get too large
         message_length = sum(
-            len(self.tokenizer.encode(message))
+            len(self._tokenizer.encode(message))
             for message in self.current_memory
         )
         while message_length > self.token_limit:
             self.current_memory = self.current_memory[1:]
             message_length = sum(
-                len(self.tokenizer.encode(message))
+                len(self._tokenizer.encode(message))
                 for message in self.current_memory
             )
 

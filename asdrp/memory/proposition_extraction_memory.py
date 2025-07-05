@@ -20,10 +20,10 @@ from llama_index.core.prompts import (BasePromptTemplate, PromptTemplate,
                                       RichPromptTemplate)
 from llama_index.core.settings import Settings
 
-DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are a comprehensive information extraction system designed to identify key propositions from conversations.
+DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are an information extraction expert designed to identify key propositions from conversations.
 
 INSTRUCTIONS:
-1. Review the conversation segment and existing propositions provided prior to this message
+1. Review the conversations and existing propositions provided prior to this message
 2. Extract specific, concrete propositions (facts, opinions, preferences, beliefs, experiences, and goals) the user has disclosed or important information discovered
 3. Focus on all types of information including:
    - Factual information (preferences, personal details, requirements, constraints, context)
@@ -48,7 +48,7 @@ Return ONLY the extracted propositions in this exact format:
 
 If no new propositions are present, return: <propositions></propositions>""")
 
-DEFAULT_CONDENSE_PROMPT = RichPromptTemplate("""You are a comprehensive proposition condensing system designed to identify key information from conversations.
+DEFAULT_CONDENSE_PROMPT = RichPromptTemplate("""You are a proposition condensing expert designed to identify key information from conversations.
 
 INSTRUCTIONS:
 1. Review the current list of existing propositions

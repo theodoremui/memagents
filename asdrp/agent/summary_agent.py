@@ -34,14 +34,34 @@ class SummaryAgent:
         llm: LLM = OpenAI(model="gpt-4.1-mini"),
         memory: Memory = None,
         tools: List[FunctionTool] = [],
+        verbose: bool = False
     ):
         self.llm = llm
-        self.memory = memory
-        self.agent = self._create_agent(memory, tools)
+        self.verbose = verbose
+        self.memory = memory if memory is not None else self._create_memory()
+        self.agent = self._create_agent(self.memory, tools)
 
+    async def _get_memory_summary(self) -> str:
+        """
+        Get a summary of the memory.
+        Returns a string of the memory summary -- one line per memory fragment.
+        """
+        if self.memory is None:
+            return []
+        
+        summary = ""
+        for block in self.memory.memory_blocks:
+            if isinstance(block, CondensedMemoryBlock):
+                for fragment in block.current_memory:
+                    summary += f"\t[condensed] {fragment}\n"
+        return summary.rstrip()
+    
     async def achat(self, user_msg: str) -> AgentReply:
         try:
             response = await self.agent.run(user_msg=user_msg, memory=self.memory)
+            if self.verbose:
+                memory_summary = await self._get_memory_summary()
+                print(f"{30*'-'}\n{memory_summary}\n{30*'-'}")
             if isinstance(response, AgentOutput):
                 return AgentReply(response_str=response.response.content)
             elif isinstance(response, ChatMessage):
@@ -60,11 +80,14 @@ class SummaryAgent:
         )
         
     def _create_memory(self) -> Memory:
-        condensed_memory = CondensedMemoryBlock(name="summary_agent", token_limit=50)
+        condensed_memory = CondensedMemoryBlock(
+            name="condensed_memory",
+            llm=self.llm
+        )
         return Memory.from_defaults(
             session_id="proposition_agent",
             token_limit=50,                       # size of the entire working memory 
-            chat_history_token_ratio=0.7,         # ratio of chat history to total tokens
+            chat_history_token_ratio=0.01,         # ratio of chat history to total tokens
             token_flush_size=10,                  # number of tokens to flush when memory is full
             insert_method=InsertMethod.SYSTEM,
             memory_blocks=[condensed_memory]
@@ -106,12 +129,22 @@ async def smoke_test_summary_agent_custom_tools():
     print_result("Custom tool reply contains 'Echo'", "Echo" in reply.response_str)
     print(f"Reply: {reply.response_str}")
 
-async def main():
+async def smoke_tests():
     await smoke_test_summary_agent_basic()
     await smoke_test_summary_agent_with_memory()
     await smoke_test_summary_agent_custom_tools()
     print("All smoke tests completed.")
 
+
+async def main():
+    agent = SummaryAgent(verbose=True)
+    user_input = input("Enter your input: ")
+    while user_input.strip() != "":
+        response = await agent.achat(user_input)
+        print(f"Response: {response.response_str}")
+        user_input = input("Enter your input: ")
+        
+    print("Thank you for chatting with me!")
 
 if __name__ == "__main__":
     asyncio.run(main())
